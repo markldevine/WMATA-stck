@@ -1,0 +1,447 @@
+#!/usr/bin/env raku
+
+use Async::Command::Multi;
+use JSON::Fast;
+use Term::TablePrint :print-table;
+#use Data::Dump::Tree;
+#use Grammar::Debugger;
+
+constant $station-terminals-file                        = 'hosts';
+constant $satellite-name                                = 'gitlab';
+constant $satellite-port                                = '443';
+
+### Throttles
+constant $nslookup-forward-timeout                      = 5;
+constant $nslookup-forward-batch                        = 129;
+constant $nslookup-reverse-timeout                      = 5;
+constant $nslookup-reverse-batch                        = 129;
+constant $WMATA_GPO_FGLINUXADMINS_GG_SG-check-timeout   = 5;
+constant $WMATA_GPO_FGLINUXADMINS_GG_SG-check-batch     = 129;
+constant $satellite-connectivity-timeout                = 5;
+constant $satellite-connectivity-batch                  = 129;
+
+my %Station-Terminals;
+my @Station-Terminals;
+
+#   Grammars
+
+################################################################################
+#   Server:         170.121.18.30
+#   Address:        170.121.18.30#53
+#
+#   Name:   K0610101.wmata.local
+#   Address: 10.80.101.240
+################################################################################
+
+grammar NSLOOKUP_FORWARD {
+    token TOP {
+        <dns-server-name> \n+
+        <dns-server-address> \n+
+        <non-auth-answer>*
+        <host-name> \n+
+        <host-address> \n+
+    }
+    token non-auth-answer {
+        'Non-authoritative answer:'
+        \n+
+    }
+    token dns-server-name {
+        ^^
+        'Server:'
+        \s+
+        $<dns-server-string> = .+?
+        $$
+    }
+    token dns-server-address {
+        ^^
+        'Address:'
+        \s+
+        $<dns-server-ip-address> = <ip-address-format>
+        '#'
+        $<dns-server-port> = \d+
+        $$
+    }
+    token host-name {
+        ^^
+        'Name:'
+        \s+
+        $<host-name-string> = .+?
+        $$
+    }
+    token host-address {
+        ^^
+        'Address:'
+        \s+
+        $<host-ip-address> = <ip-address-format>
+        $$
+    }
+    token ip-address-format {
+        \d ** 1..3 '.' \d ** 1..3 '.' \d ** 1..3 '.' \d ** 1..3
+    }
+}
+
+################################################################################
+#   240.252.80.10.in-addr.arpa      name = afceng01.wmata.local.
+#
+################################################################################
+
+grammar NSLOOKUP_REVERSE {
+    token TOP {
+        ^
+        <in-addr-arpa>
+        \s+
+        <name>
+        \n*
+        $
+    }
+    token in-addr-arpa {
+        $<octet-4> = \d ** 1..3 
+        '.'
+        $<octet-3> = \d ** 1..3 
+        '.'
+        $<octet-2> = \d ** 1..3 
+        '.'
+        $<octet-1> = \d ** 1..3 
+        '.in-addr.arpa'
+    }
+    regex name {
+        'name ='
+        \s+
+        $<canonical-name> = .+
+        '.'
+    }
+}
+
+#   Check if supplied hostname is resolvable into an IP address
+
+sub nslookup-forward {
+    my %command;
+    for @Station-Terminals -> $station-terminal {
+        %command{$station-terminal} = 'nslookup', $station-terminal;
+    }
+    my %result = Async::Command::Multi.new(:%command, :time-out($nslookup-forward-timeout), :batch($nslookup-forward-batch), :2attempts, :delay(.5)).sow.reap;
+    for @Station-Terminals -> $station-terminal {
+        if %result{$station-terminal}.exit-code == 0 {
+            my $m = NSLOOKUP_FORWARD.parse(%result{$station-terminal}.stdout-results);
+            %Station-Terminals{$station-terminal}<ip-address>       = ~$m<host-address><host-ip-address>;
+            %Station-Terminals{$station-terminal}<canonical-name>   = ~$m<host-name><host-name-string>;
+        }
+        else {
+            note "$station-terminal nslookup failed"
+        }
+    }
+}
+
+sub nslookup-reverse {
+    my %command;
+    for @Station-Terminals -> $station-terminal {
+        %command{$station-terminal} = 'nslookup', %Station-Terminals{$station-terminal}<ip-address>;
+    }
+    my %result = Async::Command::Multi.new(:%command, :time-out($nslookup-reverse-timeout), :batch($nslookup-reverse-batch), :3attempts, :delay(.5)).sow.reap;
+    for @Station-Terminals -> $station-terminal {
+        if %result{$station-terminal}.exit-code == 0 {
+            my $m = NSLOOKUP_REVERSE.parse(%result{$station-terminal}.stdout-results);
+            note $station-terminal ~ ' reverse resolution mismatch!'
+                unless %Station-Terminals{$station-terminal}<ip-address> eq ~$m<in-addr-arpa><octet-1> ~ '.' ~
+                                                                            ~$m<in-addr-arpa><octet-2> ~ '.' ~
+                                                                            ~$m<in-addr-arpa><octet-3> ~ '.' ~
+                                                                            ~$m<in-addr-arpa><octet-4>;
+        }
+        else {
+            note "$station-terminal reverse nslookup failed"
+        }
+    }
+}
+
+my @group-present;
+my @group-missing;
+sub WMATA_GPO_FGLINUXADMINS_GG_SG-check {
+    my %command;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            %command{$station-terminal} =
+            'ssh',
+            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            '/usr/bin/grep',
+            'WMATA_GPO_FGLINUXADMINS_GG_SG',
+            '/etc/opt/quest/vas/users.allow';
+        }
+    }
+    my %result = Async::Command::Multi.new(:%command, :time-out($WMATA_GPO_FGLINUXADMINS_GG_SG-check-timeout), :batch($WMATA_GPO_FGLINUXADMINS_GG_SG-check-batch), :2attempts, :delay(.5)).sow.reap;
+    @group-present = ();
+    @group-missing = ();
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            given %result{$station-terminal}.exit-code {
+                when 0  { @group-present.push: $station-terminal;  }
+                default { @group-missing.push: $station-terminal;  }
+            }
+        }
+    }
+}
+
+sub satellite-connectivity {
+    my %command;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            %command{$station-terminal} =
+            'ssh',
+            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            '/usr/bin/ncat',
+            '-w',
+            '2',
+            '-z',
+            $satellite-name,
+            $satellite-port;
+        }
+    }
+    my %result = Async::Command::Multi.new(:%command, :time-out($satellite-connectivity-timeout), :batch($satellite-connectivity-batch), :2attempts, :delay(.5)).sow.reap;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            given %result{$station-terminal}.exit-code {
+                when 0  { %Station-Terminals{$station-terminal}<satellite> = True;  }
+                default { %Station-Terminals{$station-terminal}<satellite> = False; }
+            }
+        }
+    }
+}
+
+sub centralized-sudo {
+    my %command;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            %command{$station-terminal} =
+            'ssh',
+            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            '/usr/bin/sudo',
+            '-nl';
+        }
+    }
+    my %result = Async::Command::Multi.new(:%command, :20time-out, :10batch, :2attempts, :delay(.5)).sow.reap;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            given %result{$station-terminal}.exit-code {
+                when 0  { %Station-Terminals{$station-terminal}<sudo> = True;  }
+                default { %Station-Terminals{$station-terminal}<sudo> = False; }
+            }
+        }
+    }
+}
+
+#   Check if pings are echoed
+
+sub ping {
+    my %command;
+    for @Station-Terminals -> $station-terminal {
+        %command{$station-terminal} = 'ping', '-c', '1', '-w', '1', %Station-Terminals{$station-terminal}<ip-address>;
+    }
+    my %result = Async::Command::Multi.new(:%command, :10time-out, :60batch, :2attempts, :delay(.5)).sow.reap;
+    for @Station-Terminals -> $station-terminal {
+        given %result{$station-terminal}.exit-code {
+            when 0  { %Station-Terminals{$station-terminal}<pingable> = True; }
+            default { %Station-Terminals{$station-terminal}<pingable> = False; }
+        }
+    }
+}
+
+#   Check RHEL V.R
+
+sub version-release {
+    my %command;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            %command{$station-terminal} =
+            'ssh',
+            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            '/usr/bin/grep',
+            'VERSION_ID',
+            '/etc/os-release';
+        }
+    }
+    my %result = Async::Command::Multi.new(:%command, :20time-out, :10batch, :2attempts, :delay(.5)).sow.reap;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            given %result{$station-terminal}.exit-code {
+                when 0  {
+                    %Station-Terminals{$station-terminal}<version-id> =
+                    %result{$station-terminal}.stdout-results.subst(/VERSION_ID '=' '"' (\d+ '.' \d+) '"'/, { $0 }).chomp;
+                    %Station-Terminals{$station-terminal}<version> = %Station-Terminals{$station-terminal}<version-id>.subst(/(\d+) '.' \d+/, { $0 }).chomp;
+                    %Station-Terminals{$station-terminal}<release> = %Station-Terminals{$station-terminal}<version-id>.subst(/\d+ '.' (\d+)/, { $0 }).chomp;
+                }
+                default { note %Station-Terminals{$station-terminal}<canonical-name> ~ ' failed SSH connection'; }
+            }
+        }
+    }
+}
+
+#   Collect the RPM inventories
+
+sub collect-rpm-inventory {
+    my %command;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            %command{$station-terminal} =
+            'ssh',
+            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            '/usr/bin/rpm',
+            '-qa';
+        }
+    }
+    my %result = Async::Command::Multi.new(:%command, :20time-out, :10batch, :2attempts, :delay(.5)).sow.reap;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            given %result{$station-terminal}.exit-code {
+                when 0  {
+                    my @rpms = %result{$station-terminal}.stdout-results.chomp.split(/\n/);
+                    %Station-Terminals{$station-terminal}<RPMs> = @rpms;
+                }
+                default { note %Station-Terminals{$station-terminal}<canonical-name> ~ ' failed SSH rpm -qa'; }
+            }
+        }
+    }
+}
+
+enum switches (
+    reverse         => 0o00001,
+    json            => 0o00002,
+    nogroup         => 0o00004,
+    group           => 0o00010,
+    docker-edition  => 0o00020,
+    pingable        => 0o00040,
+    unpingable      => 0o00100,
+    satellite       => 0o00200,
+    nosatellite     => 0o00400,
+    sudo            => 0o01000,
+    ntpstat         => 0o02000,
+    nosudo          => 0o04000,
+    vr              => 0o10000,
+);
+
+sub MAIN (
+    Bool :$reverse,                 #= test reverse hostname resolution (dies on failure)
+    Bool :$json,                    #= output all data in JSON
+    Bool :$nogroup,                 #= report pingable STs where the WMATA_GPO_FGLINUXADMINS_GG_SG AD group is missing
+    Bool :$group,                   #= report pingable STs where the WMATA_GPO_FGLINUXADMINS_GG_SG AD group is present
+    Bool :$docker-edition,          #= report pingable STs' Docker edition
+    Bool :$pingable,                #= report pingable STs
+    Bool :$unpingable,              #= report unpingable STs
+    Bool :$satellite,               #= report pingable STs with satellite connectivity
+    Bool :$nosatellite,             #= report pingable STs with NO satellite connectivity
+    Bool :$sudo,                    #= report pingable STs with centralized SUDO connectivity
+    Bool :$ntpstat,                 #= report pingable STs with ntp.wmata.local sync
+    Bool :$nosudo,                  #= report pingable STs with NO centralized SUDO connectivity
+    Bool :$vr,                      #= query pingable STs' operating system V.Rs
+) {
+    @Station-Terminals = slurp($station-terminals-file).split("\n").grep(/\w+/);
+    nslookup-forward;
+    ping;
+    if $reverse {
+        nslookup-reverse;
+    }
+    elsif $pingable {
+        for @Station-Terminals -> $station-terminal {
+            next unless %Station-Terminals{$station-terminal}<pingable>;
+            printf "%-25s%s\n", %Station-Terminals{$station-terminal}<canonical-name>, %Station-Terminals{$station-terminal}<ip-address>;
+        }
+    }
+    elsif $unpingable {
+        for @Station-Terminals -> $station-terminal {
+            next if %Station-Terminals{$station-terminal}<pingable>;
+            printf "%-25s%s\n", %Station-Terminals{$station-terminal}<canonical-name>, %Station-Terminals{$station-terminal}<ip-address>;
+        }
+    }
+    elsif $json {
+        say to-json(%Station-Terminals);
+    }
+    elsif $group {
+        WMATA_GPO_FGLINUXADMINS_GG_SG-check;
+        .put for @group-present;
+    }
+    elsif $nogroup {
+        WMATA_GPO_FGLINUXADMINS_GG_SG-check;
+        .put for @group-missing;
+    }
+    elsif $satellite {
+        satellite-connectivity;
+        for @Station-Terminals -> $station-terminal {
+            next unless %Station-Terminals{$station-terminal}<pingable>;
+            printf "%-25s%s\n", %Station-Terminals{$station-terminal}<canonical-name>,
+                                %Station-Terminals{$station-terminal}<ip-address>
+              if %Station-Terminals{$station-terminal}<satellite>;
+        }
+    }
+    elsif $nosatellite {
+        satellite-connectivity;
+        for @Station-Terminals -> $station-terminal {
+            next unless %Station-Terminals{$station-terminal}<pingable>;
+            printf "%-25s%s\n", %Station-Terminals{$station-terminal}<canonical-name>,
+                                %Station-Terminals{$station-terminal}<ip-address>
+              unless %Station-Terminals{$station-terminal}<satellite>;
+        }
+    }
+    elsif $sudo {
+        centralized-sudo;
+        for @Station-Terminals -> $station-terminal {
+            next unless %Station-Terminals{$station-terminal}<pingable>;
+            printf "%-25s%s\n", %Station-Terminals{$station-terminal}<canonical-name>,
+                                %Station-Terminals{$station-terminal}<ip-address>
+              if %Station-Terminals{$station-terminal}<sudo>;
+        }
+    }
+    elsif $nosudo {
+        centralized-sudo;
+        for @Station-Terminals -> $station-terminal {
+            next unless %Station-Terminals{$station-terminal}<pingable>;
+            printf "%-25s%s\n", %Station-Terminals{$station-terminal}<canonical-name>,
+                                %Station-Terminals{$station-terminal}<ip-address>
+              unless %Station-Terminals{$station-terminal}<sudo>;
+        }
+    }
+    elsif $vr {
+        version-release;
+        for @Station-Terminals -> $station-terminal {
+            next unless %Station-Terminals{$station-terminal}<version-id>;
+            printf "%-25s%-18s%s\n", %Station-Terminals{$station-terminal}<canonical-name>,
+                                %Station-Terminals{$station-terminal}<ip-address>,
+                                %Station-Terminals{$station-terminal}<version-id>;
+        }
+    }
+    elsif $docker-edition {
+        collect-rpm-inventory;
+        for @Station-Terminals -> $station-terminal {
+            next unless %Station-Terminals{$station-terminal}<pingable>;
+            my $docker-edition = 'N/A';
+            for %Station-Terminals{$station-terminal}<RPMs> -> $rpm {
+                if $rpm ~~ /^(docker '-' \w\w)/ {
+                    $docker-edition = $0;
+                    last;
+                }
+            }
+            printf "%-25s%s\n", %Station-Terminals{$station-terminal}<canonical-name>, $docker-edition;
+        }
+    }
+    else {
+        nslookup-reverse;
+        satellite-connectivity;
+        centralized-sudo;
+        version-release;
+        my @table;
+        my @hdr = 'Station Terminal', 'IP Address', "DNS ⇆", 'Ping', 'Ver.Rel', 'Satellite', 'SUDO';
+        @table.push: @hdr;
+        my $index = 1;
+        for @Station-Terminals -> $station-terminal {
+            my @row =
+              %Station-Terminals{$station-terminal}<canonical-name>,
+              %Station-Terminals{$station-terminal}<ip-address>,
+              "✓",
+              %Station-Terminals{$station-terminal}<pingable> ?? "✓" !! "✗",
+              %Station-Terminals{$station-terminal}<version-id> ?? %Station-Terminals{$station-terminal}<version-id> !! "",
+              %Station-Terminals{$station-terminal}<satellite> ?? "✓" !! "✗",
+              %Station-Terminals{$station-terminal}<sudo> ?? "✓" !! "✗";
+            @table.push: @row;
+        }
+        print-table(@table);
+    }
+}
+
+=finish
