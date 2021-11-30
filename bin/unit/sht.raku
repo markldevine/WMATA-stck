@@ -55,8 +55,18 @@ class System-Clock-Hardware-Clock-Timestamps-Actions {
             second  => ~$/<hms><seconds>,
         );
     }
+    method hardware-clock-timestamp ($/) {
+        make DateTime.new(
+            year    => ~$/<year>,
+            month   => ~$/<numeric-month>,
+            day     => ~$/<day-of-month>,
+            hour    => ~$/<hms><hours>,
+            minute  => ~$/<hms><minutes>,
+            second  => ~$/<hms><seconds>,
+        );
+    }
     method alpha-month ($/) {
-        my %a2n = ( Jan => 0, Feb => 1, Mar => 2, Apr => 3, May => 4, Jun => 5, Jul => 6, Aug => 7, Sep => 8, Oct => 9, Nov => 10, Dec => 11 );
+        my %a2n = ( Jan => 1, Feb => 2, Mar => 3, Apr => 4, May => 5, Jun => 6, Jul => 7, Aug => 8, Sep => 9, Oct => 10, Nov => 11, Dec => 12 );
         make %a2n{~$/};
     }
 }
@@ -64,5 +74,6 @@ class System-Clock-Hardware-Clock-Timestamps-Actions {
 #ddt System-Clock-Hardware-Clock-Timestamps.parse($datetime);
 #ddt System-Clock-Hardware-Clock-Timestamps.parse($datetime, :actions(System-Clock-Hardware-Clock-Timestamps-Actions.new));
 my $match-tree = System-Clock-Hardware-Clock-Timestamps.parse($datetime, :actions(System-Clock-Hardware-Clock-Timestamps-Actions.new));
-put $match-tree<system-clock-timestamp>.made.Str;
+put '   ' ~ $match-tree<system-clock-timestamp>.made.Str ~ "\n" ~
+    ' - ' ~ $match-tree<hardware-clock-timestamp>.made.Str;
 
