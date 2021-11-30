@@ -1,8 +1,8 @@
 #!/usr/bin/env raku
 
 #use Grammar::Debugger;
-use Grammar::Tracer;
-use Data::Dump::Tree;
+#use Grammar::Tracer;
+#use Data::Dump::Tree;
 
 my $datetime    = "Tue Nov 30 08:58:16 EST 2021\n2021-11-30 09:58:18.543592-05:00";
 
@@ -74,6 +74,8 @@ class System-Clock-Hardware-Clock-Timestamps-Actions {
 #ddt System-Clock-Hardware-Clock-Timestamps.parse($datetime);
 #ddt System-Clock-Hardware-Clock-Timestamps.parse($datetime, :actions(System-Clock-Hardware-Clock-Timestamps-Actions.new));
 my $match-tree = System-Clock-Hardware-Clock-Timestamps.parse($datetime, :actions(System-Clock-Hardware-Clock-Timestamps-Actions.new));
-put '   ' ~ $match-tree<system-clock-timestamp>.made.Str ~ "\n" ~
-    ' - ' ~ $match-tree<hardware-clock-timestamp>.made.Str;
-
+my $diff = ($match-tree<system-clock-timestamp>.made - $match-tree<hardware-clock-timestamp>.made).abs;
+put '   ' ~ $match-tree<system-clock-timestamp>.made.Str ~ " (s)\n" ~
+    ' - ' ~ $match-tree<hardware-clock-timestamp>.made.Str ~ " (h)\n" ~
+    '   ' ~ '-' x 20 ~ "\n" ~
+    '   ' ~ $diff ~ ' seconds';
