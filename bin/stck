@@ -5,6 +5,7 @@ use JSON::Fast;
 use Term::TablePrint :print-table;
 #use Data::Dump::Tree;
 #use Grammar::Debugger;
+#use Grammar::Tracer;
 
 constant $station-terminals-file                        = 'hosts';
 constant $satellite-name                                = 'jgstlitgate1lpv.wmata.local';
@@ -109,6 +110,76 @@ grammar NSLOOKUP_REVERSE {
         \s+
         $<canonical-name> = .+
         '.'
+    }
+}
+
+################################################################################
+#   System and Hardware Clocks
+################################################################################
+
+grammar System-Clock-Hardware-Clock-Timestamps {
+    token TOP {
+        ^
+        <system-clock-timestamp>
+        \n
+        <hardware-clock-timestamp>
+        \n
+        $
+    }
+    token system-clock-timestamp {
+        <day-of-week>   \s+
+        <alpha-month>   \s+
+        <day-of-month>  \s+
+        <hms>           \s+
+        <time-zone>     \s+
+        <year>
+    }
+    token hardware-clock-timestamp {
+        <year>          '-'
+        <numeric-month> '-'
+        <day-of-month>  \s+
+        <hms>           '.'
+        <subseconds>    '-'
+        <zone-offset>
+    }
+    token day-of-week   { 'Sun' || 'Mon' || 'Tue' || 'Wed' || 'Thu' || 'Fri' || 'Sat' }
+    token alpha-month   { 'Jan' || 'Feb' || 'Mar' || 'Apr' || 'May' || 'Jun' || 'Jul' || 'Aug' || 'Sep' || 'Oct' || 'Nov' || 'Dec' }
+    token numeric-month { \d\d }
+    token day-of-month  { \d\d }
+    token hms           { <hours> ':' <minutes> ':' <seconds> }
+    token hours         { \d\d }
+    token minutes       { \d\d }
+    token seconds       { \d\d }
+    token subseconds    { \d+ }
+    token time-zone     { \w\w\w }
+    token zone-offset   { <hours> ':' <minutes> }
+    token year          { \d\d\d\d }
+}
+
+class System-Clock-Hardware-Clock-Timestamps-Actions {
+    method system-clock-timestamp ($/) {
+        make DateTime.new(
+            year    => ~$/<year>,
+            month   => ~$/<alpha-month>.made,
+            day     => ~$/<day-of-month>,
+            hour    => ~$/<hms><hours>,
+            minute  => ~$/<hms><minutes>,
+            second  => ~$/<hms><seconds>,
+        );
+    }
+    method hardware-clock-timestamp ($/) {
+        make DateTime.new(
+            year    => ~$/<year>,
+            month   => ~$/<numeric-month>,
+            day     => ~$/<day-of-month>,
+            hour    => ~$/<hms><hours>,
+            minute  => ~$/<hms><minutes>,
+            second  => ~$/<hms><seconds>,
+        );
+    }
+    method alpha-month ($/) {
+        my %a2n = ( Jan => 1, Feb => 2, Mar => 3, Apr => 4, May => 5, Jun => 6, Jul => 7, Aug => 8, Sep => 9, Oct => 10, Nov => 11, Dec => 12 );
+        make %a2n{~$/};
     }
 }
 
@@ -266,9 +337,12 @@ sub clocks {
         if %Station-Terminals{$station-terminal}<pingable> {
             given %result{$station-terminal}.exit-code {
                 when 0  {
-                    %Station-Terminals{$station-terminal}<clocks> = %result{$station-terminal}.stdout-results;
+                    my $mtree = System-Clock-Hardware-Clock-Timestamps.parse(%result{$station-terminal}.stdout-results, :actions(System-Clock-Hardware-Clock-Timestamps-Actions.new));
+die unless $mtree;
+                    %Station-Terminals{$station-terminal}<system-clock>     = $mtree<system-clock-timestamp>.made;
+                    %Station-Terminals{$station-terminal}<hardware-clock>   = $mtree<hardware-clock-timestamp>.made;
                 }
-                default { note %Station-Terminals{$station-terminal}<canonical-name> ~ ' failed SSH clocks check'; }
+                default { note %Station-Terminals{$station-terminal}<canonical-name> ~ ' failed clocks check'; }
             }
         }
     }
@@ -380,10 +454,12 @@ sub MAIN (
         clocks();
         for @Station-Terminals -> $station-terminal {
             next unless %Station-Terminals{$station-terminal}<pingable>;
-            if %Station-Terminals{$station-terminal}<clocks> {
-                printf "%-25s%s\n",
+            if %Station-Terminals{$station-terminal}<system-clock> && %Station-Terminals{$station-terminal}<hardware-clock> {
+                printf "%-25s(system) %s - %s (hardware) =~= %d second difference\n",
                     %Station-Terminals{$station-terminal}<canonical-name>,
-                    %Station-Terminals{$station-terminal}<clocks>;
+                    %Station-Terminals{$station-terminal}<system-clock>.Str,
+                    %Station-Terminals{$station-terminal}<hardware-clock>.Str,
+                    (%Station-Terminals{$station-terminal}<system-clock> - %Station-Terminals{$station-terminal}<hardware-clock>).abs;
             }
         }
     }
