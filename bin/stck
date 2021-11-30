@@ -248,29 +248,25 @@ sub ping {
 #   Check hardware & system clock differences on all pingable STs
 
 sub clocks {
-put "\nclocks\n";
     my %command;
     for @Station-Terminals -> $station-terminal {
         if %Station-Terminals{$station-terminal}<pingable> {
             %command{$station-terminal} =
             'ssh',
             'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            '/usr/bin/date',
+            ';',
             '/usr/bin/sudo',
-            '/usr/sbin/hwclock';
-#           ';',
-#           '/usr/bin/date';
+            '/usr/sbin/hwclock',
+            ;
         }
     }
     my %result = Async::Command::Multi.new(:%command, :10time-out, :129batch, :2attempts, :delay(.5)).sow.reap;
     for @Station-Terminals -> $station-terminal {
         if %Station-Terminals{$station-terminal}<pingable> {
-note $station-terminal;
-note %result{$station-terminal}.stdout-results;
-note %result{$station-terminal}.stderr-results;
             given %result{$station-terminal}.exit-code {
                 when 0  {
                     %Station-Terminals{$station-terminal}<clocks> = %result{$station-terminal}.stdout-results;
-#note %Station-Terminals{$station-terminal}<clocks>;
                 }
                 default { note %Station-Terminals{$station-terminal}<canonical-name> ~ ' failed SSH clocks check'; }
             }
@@ -382,12 +378,14 @@ sub MAIN (
     }
     elsif $clocks {
         clocks();
-#       for @Station-Terminals -> $station-terminal {
-#           next unless %Station-Terminals{$station-terminal}<pingable>;
-#           printf "%-25s%s\n",
-#               %Station-Terminals{$station-terminal}<canonical-name>,
-#               %Station-Terminals{$station-terminal}<clocks>;
-#       }
+        for @Station-Terminals -> $station-terminal {
+            next unless %Station-Terminals{$station-terminal}<pingable>;
+            if %Station-Terminals{$station-terminal}<clocks> {
+                printf "%-25s%s\n",
+                    %Station-Terminals{$station-terminal}<canonical-name>,
+                    %Station-Terminals{$station-terminal}<clocks>;
+            }
+        }
     }
     elsif $unpingable {
         for @Station-Terminals -> $station-terminal {
