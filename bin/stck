@@ -7,7 +7,7 @@ use Term::TablePrint :print-table;
 #use Grammar::Debugger;
 
 constant $station-terminals-file                        = 'hosts';
-constant $satellite-name                                = 'gitlab';
+constant $satellite-name                                = 'jgstlitgate1lpv.wmata.local';
 constant $satellite-port                                = '443';
 
 ### Throttles
@@ -244,6 +244,40 @@ sub ping {
     }
 }
 
+    
+#   Check hardware & system clock differences on all pingable STs
+
+sub clocks {
+put "\nclocks\n";
+    my %command;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            %command{$station-terminal} =
+            'ssh',
+            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            '/usr/bin/sudo',
+            '/usr/sbin/hwclock';
+#           ';',
+#           '/usr/bin/date';
+        }
+    }
+    my %result = Async::Command::Multi.new(:%command, :10time-out, :129batch, :2attempts, :delay(.5)).sow.reap;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+note $station-terminal;
+note %result{$station-terminal}.stdout-results;
+note %result{$station-terminal}.stderr-results;
+            given %result{$station-terminal}.exit-code {
+                when 0  {
+                    %Station-Terminals{$station-terminal}<clocks> = %result{$station-terminal}.stdout-results;
+#note %Station-Terminals{$station-terminal}<clocks>;
+                }
+                default { note %Station-Terminals{$station-terminal}<canonical-name> ~ ' failed SSH clocks check'; }
+            }
+        }
+    }
+}
+
 #   Check RHEL V.R
 
 sub version-release {
@@ -315,10 +349,12 @@ enum switches (
     ntpstat         => 0o02000,
     nosudo          => 0o04000,
     vr              => 0o10000,
+    clocks          => 0o20000,
 );
 
 sub MAIN (
     Bool :$reverse,                 #= test reverse hostname resolution (dies on failure)
+    Bool :$clocks,                  #= report hardware & system clock differences on all pingable STs 
     Bool :$json,                    #= output all data in JSON
     Bool :$nogroup,                 #= report pingable STs where the WMATA_GPO_FGLINUXADMINS_GG_SG AD group is missing
     Bool :$group,                   #= report pingable STs where the WMATA_GPO_FGLINUXADMINS_GG_SG AD group is present
@@ -343,6 +379,15 @@ sub MAIN (
             next unless %Station-Terminals{$station-terminal}<pingable>;
             printf "%-25s%s\n", %Station-Terminals{$station-terminal}<canonical-name>, %Station-Terminals{$station-terminal}<ip-address>;
         }
+    }
+    elsif $clocks {
+        clocks();
+#       for @Station-Terminals -> $station-terminal {
+#           next unless %Station-Terminals{$station-terminal}<pingable>;
+#           printf "%-25s%s\n",
+#               %Station-Terminals{$station-terminal}<canonical-name>,
+#               %Station-Terminals{$station-terminal}<clocks>;
+#       }
     }
     elsif $unpingable {
         for @Station-Terminals -> $station-terminal {
