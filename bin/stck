@@ -5,7 +5,7 @@ use JSON::Fast;
 use Term::TablePrint :print-table;
 #use Data::Dump::Tree;
 #use Grammar::Debugger;
-#use Grammar::Tracer;
+use Grammar::Tracer;
 
 constant $station-terminals-file                        = 'hosts';
 constant $satellite-name                                = 'jgstlitgate1lpv.wmata.local';
@@ -145,7 +145,7 @@ grammar System-Clock-Hardware-Clock-Timestamps {
     token day-of-week   { 'Sun' || 'Mon' || 'Tue' || 'Wed' || 'Thu' || 'Fri' || 'Sat' }
     token alpha-month   { 'Jan' || 'Feb' || 'Mar' || 'Apr' || 'May' || 'Jun' || 'Jul' || 'Aug' || 'Sep' || 'Oct' || 'Nov' || 'Dec' }
     token numeric-month { \d\d }
-    token day-of-month  { \d\d }
+    token day-of-month  { \d\d? }
     token hms           { <hours> ':' <minutes> ':' <seconds> }
     token hours         { \d\d }
     token minutes       { \d\d }
@@ -332,13 +332,13 @@ sub clocks {
             ;
         }
     }
-    my %result = Async::Command::Multi.new(:%command, :10time-out, :129batch, :2attempts, :delay(.5)).sow.reap;
+    my %result = Async::Command::Multi.new(:%command, :20time-out, :129batch, :2attempts, :delay(.5)).sow.reap;
     for @Station-Terminals -> $station-terminal {
         if %Station-Terminals{$station-terminal}<pingable> {
             given %result{$station-terminal}.exit-code {
                 when 0  {
                     my $mtree = System-Clock-Hardware-Clock-Timestamps.parse(%result{$station-terminal}.stdout-results, :actions(System-Clock-Hardware-Clock-Timestamps-Actions.new));
-die unless $mtree;
+die $station-terminal unless $mtree;
                     %Station-Terminals{$station-terminal}<system-clock>     = $mtree<system-clock-timestamp>.made;
                     %Station-Terminals{$station-terminal}<hardware-clock>   = $mtree<hardware-clock-timestamp>.made;
                 }
