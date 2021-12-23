@@ -1,11 +1,13 @@
 #!/usr/bin/env raku
 
+#%%%    add a hostname checker
+
 use Async::Command::Multi;
 use JSON::Fast;
 use Term::TablePrint :print-table;
 #use Data::Dump::Tree;
 #use Grammar::Debugger;
-use Grammar::Tracer;
+#use Grammar::Tracer;
 
 constant $station-terminals-file                        = 'hosts';
 constant $satellite-name                                = 'jgstlitgate1lpv.wmata.local';
@@ -380,6 +382,14 @@ sub version-release {
 
 #   Collect the RPM inventories
 
+#mdevine@W-608863:~/github.com/WMATA-stck/bin> ssh E0207201 "dnf info docker-\* | grep -e ^Name -e '^From repo' ; dnf info containerd.io | grep -e ^Name -e '^From repo'"
+#Name         : docker-ee
+#From repo    : WMATA_Mirantis_Docker_EE_Mirantis_Docker_EE
+#Name         : docker-ee-cli
+#From repo    : WMATA_Mirantis_Docker_EE_Mirantis_Docker_EE
+#Name         : containerd.io
+#From repo    : WMATA_Mirantis_Docker_EE_Mirantis_Docker_EE
+
 sub collect-rpm-inventory {
     my %command;
     for @Station-Terminals -> $station-terminal {
@@ -405,27 +415,36 @@ sub collect-rpm-inventory {
     }
 }
 
-enum switches (
-    reverse         => 0o00001,
-    json            => 0o00002,
-    nogroup         => 0o00004,
-    group           => 0o00010,
-    docker-edition  => 0o00020,
-    pingable        => 0o00040,
-    unpingable      => 0o00100,
-    satellite       => 0o00200,
-    nosatellite     => 0o00400,
-    sudo            => 0o01000,
-    ntpstat         => 0o02000,
-    nosudo          => 0o04000,
-    vr              => 0o10000,
-    clocks          => 0o20000,
-);
+#   Compare 
+
+sub get-host-names {
+    my %command;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            %command{$station-terminal} =
+            'ssh',
+            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            '/usr/bin/hostname';
+        }
+    }
+    my %result = Async::Command::Multi.new(:%command, :20time-out, :10batch, :2attempts, :delay(.5)).sow.reap;
+    for @Station-Terminals -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            given %result{$station-terminal}.exit-code {
+                when 0  {
+                    %Station-Terminals{$station-terminal}<host-name> = %result{$station-terminal}.stdout-results.chomp;
+                }
+                default { note %Station-Terminals{$station-terminal}<canonical-name> ~ ' failed SSH hostname'; }
+            }
+        }
+    }
+}
 
 sub MAIN (
     Bool :$reverse,                 #= test reverse hostname resolution (dies on failure)
     Bool :$clocks,                  #= report hardware & system clock differences on all pingable STs 
     Bool :$json,                    #= output all data in JSON
+    Bool :$name-diffs,              #= report pingable STs with differences between the hostname and the canonical FQDN hame
     Bool :$nogroup,                 #= report pingable STs where the WMATA_GPO_FGLINUXADMINS_GG_SG AD group is missing
     Bool :$group,                   #= report pingable STs where the WMATA_GPO_FGLINUXADMINS_GG_SG AD group is present
     Bool :$docker-edition,          #= report pingable STs' Docker edition
@@ -438,7 +457,7 @@ sub MAIN (
     Bool :$nosudo,                  #= report pingable STs with NO centralized SUDO connectivity
     Bool :$vr,                      #= query pingable STs' operating system V.Rs
 ) {
-    @Station-Terminals = slurp($station-terminals-file).split("\n").grep(/\w+/);
+    @Station-Terminals = slurp($station-terminals-file).split("\n").map({$_ if $_ !~~ /^ '#'/}).grep(/\w+/);
     nslookup-forward;
     ping;
     if $reverse {
@@ -448,6 +467,17 @@ sub MAIN (
         for @Station-Terminals -> $station-terminal {
             next unless %Station-Terminals{$station-terminal}<pingable>;
             printf "%-25s%s\n", %Station-Terminals{$station-terminal}<canonical-name>, %Station-Terminals{$station-terminal}<ip-address>;
+        }
+    }
+    elsif $name-diffs {
+        get-host-names();
+        for @Station-Terminals -> $station-terminal {
+            next unless %Station-Terminals{$station-terminal}<pingable>;
+            if %Station-Terminals{$station-terminal}<canonical-name> ne %Station-Terminals{$station-terminal}<host-name> {
+                printf "%-25s hostname identity is '%s'\n",
+                    %Station-Terminals{$station-terminal}<canonical-name>,
+                    %Station-Terminals{$station-terminal}<host-name>;
+            }
         }
     }
     elsif $clocks {
