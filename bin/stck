@@ -4,14 +4,28 @@
 
 use Async::Command::Multi;
 use JSON::Fast;
+use Redis;
 use Term::TablePrint :print-table;
 #use Data::Dump::Tree;
 #use Grammar::Debugger;
 #use Grammar::Tracer;
 
-constant $station-terminals-file                        = 'hosts';
 constant $satellite-name                                = 'jgstlitgate1lpv.wmata.local';
 constant $satellite-port                                = '443';
+
+#class Redis::Client::SelectServerIP {
+#    has $!port = 6379;
+#    has @!bound-redis-server-ifs = <localhost jgstmgtgate1lpv.wmata.local ctstmgtgate1lpv.wmata.local>;
+#    has $!current-bound-redis-server-if;
+#    has $!connection;
+#
+#    submethod TWEAK {
+#        $!connection = Redis.new($!current-bound-redis-server-if ~ ':' ~ $!port, decode_response => True);
+#    }
+#}
+#my $redis = Redis::Client::SelectServerIP.new.connection;
+
+my $redis = Redis.new('127.0.0.1:6379', decode_response => True);
 
 ### Throttles
 constant $nslookup-forward-timeout                      = 5;
@@ -482,7 +496,7 @@ sub MAIN (
     Bool :$nosudo,                  #= report pingable STs with NO centralized SUDO connectivity
     Bool :$vr,                      #= query pingable STs' operating system V.Rs
 ) {
-    @Station-Terminals-Raw = slurp($station-terminals-file).split("\n").map({$_ if $_ !~~ /^ '#'/}).grep(/\w+/);
+    @Station-Terminals-Raw = $redis.smembers('fg:st:lc:all').list.sort({ $^a.fc cmp $^b.fc });
     nslookup-forward;
     ping;
     if $reverse {
