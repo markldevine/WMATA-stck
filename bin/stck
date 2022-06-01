@@ -289,8 +289,14 @@ sub centralized-sudo {
             %command{$station-terminal} =
             'ssh',
             'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
-            '/usr/bin/sudo',
-            '-nl';
+#           '/usr/bin/ncat',
+#           '-w',
+#           '2',
+#           '-z',
+#           '10.10.132.63',
+#           '12345';
+           '/usr/bin/sudo',
+           '-nl';
         }
     }
     my %result = Async::Command::Multi.new(:%command, :20time-out, :10batch, :2attempts, :delay(.5)).sow.reap;
