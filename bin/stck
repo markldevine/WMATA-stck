@@ -288,7 +288,7 @@ sub centralized-sudo {
         if %Station-Terminals{$station-terminal}<pingable> {
             %command{$station-terminal} =
             'ssh',
-            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            %Station-Terminals{$station-terminal}<canonical-name>,
 #           '/usr/bin/ncat',
 #           '-w',
 #           '2',
