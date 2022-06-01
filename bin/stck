@@ -237,7 +237,7 @@ sub WMATA_GPO_FGLINUXADMINS_GG_SG-check {
         if %Station-Terminals{$station-terminal}<pingable> {
             %command{$station-terminal} =
             'ssh',
-            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            %Station-Terminals{$station-terminal}<canonical-name>,
             '/usr/bin/grep',
             'WMATA_GPO_FGLINUXADMINS_GG_SG',
             '/etc/opt/quest/vas/users.allow';
@@ -262,7 +262,7 @@ sub satellite-connectivity {
         if %Station-Terminals{$station-terminal}<pingable> {
             %command{$station-terminal} =
             'ssh',
-            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            %Station-Terminals{$station-terminal}<canonical-name>,
             '/usr/bin/ncat',
             '-w',
             '2',
@@ -335,7 +335,7 @@ sub clocks {
         if %Station-Terminals{$station-terminal}<pingable> {
             %command{$station-terminal} =
             'ssh',
-            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            %Station-Terminals{$station-terminal}<canonical-name>,
             '/usr/bin/date',
             ';',
             '/usr/bin/sudo',
@@ -367,7 +367,7 @@ sub version-release {
         if %Station-Terminals{$station-terminal}<pingable> {
             %command{$station-terminal} =
             'ssh',
-            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            %Station-Terminals{$station-terminal}<canonical-name>,
             '/usr/bin/grep',
             'VERSION_ID',
             '/etc/os-release';
@@ -405,7 +405,7 @@ sub collect-rpm-inventory {
         if %Station-Terminals{$station-terminal}<pingable> {
             %command{$station-terminal} =
             'ssh',
-            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            %Station-Terminals{$station-terminal}<canonical-name>,
             '/usr/bin/rpm',
             '-qa';
         }
@@ -432,7 +432,7 @@ sub get-ntpstat {
         if %Station-Terminals{$station-terminal}<pingable> {
             %command{$station-terminal} =
             'ssh',
-            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            %Station-Terminals{$station-terminal}<canonical-name>,
             '/usr/bin/ntpstat';
         }
     }
@@ -457,7 +457,7 @@ sub get-host-names {
         if %Station-Terminals{$station-terminal}<pingable> {
             %command{$station-terminal} =
             'ssh',
-            'A028441@' ~ %Station-Terminals{$station-terminal}<canonical-name>,
+            %Station-Terminals{$station-terminal}<canonical-name>,
             '/usr/bin/hostname';
         }
     }
