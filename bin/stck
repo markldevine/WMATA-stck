@@ -389,6 +389,63 @@ sub version-release {
     }
 }
 
+#   Collect DNF info on OneIdentity's vasclnt & qpm-plugin
+
+#/bin/dnf info --installed vasclnt qpm-plugin
+#Name         : qpm-plugin
+#Version      : 7.2.1.0
+#Name         : vasclnt
+#Version      : 5.0.7
+
+sub collect-dnf-info {
+    my %command;
+    for @Station-Terminals-Raw -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            %command{$station-terminal} =
+            'ssh',
+            %Station-Terminals{$station-terminal}<canonical-name>,
+            '/bin/dnf',
+            'info',
+            '--installed',
+            'vasclnt',
+            'qpm-plugin';
+        }
+    }
+    my %result = Async::Command::Multi.new(:%command, :20time-out, :10batch, :2attempts, :delay(.5)).sow.reap;
+    for @Station-Terminals-Raw -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            given %result{$station-terminal}.exit-code {
+                when 0  {
+                    my @rcds = %result{$station-terminal}.stdout-results.chomp.split(/\n/);
+                    loop (my $i = 0; $i < @rcds.elems; $i++) {
+                        if @rcds[$i] ~~ /^ Name \s* ':' \s* qpm'-'plugin $/ {
+                            if @rcds[++$i] ~~ /^ Version \s* ':' \s* (.+) $/ {
+                                %Station-Terminals{$station-terminal}<OneIdentity><qpm-plugin><version> = $0.Str;
+                            }
+                            else {
+                                die 'dnf info --installed expected qpm-plugin Version';
+                            }
+                            next;
+                        }
+                        if @rcds[$i] ~~ /^ Name \s* ':' \s* vasclnt $/ {
+                            if @rcds[++$i] ~~ /^ Version \s* ':' \s* (.+) $/ {
+                                %Station-Terminals{$station-terminal}<OneIdentity><vasclnt><version> = $0.Str;
+                            }
+                            else {
+                                die 'dnf info --installed expected vasclnt Version';
+                            }
+                            next;
+                        }
+                    }
+                }
+                default { note %Station-Terminals{$station-terminal}<canonical-name> ~ ' failed SSH dnf info --installed vasclnt qpm-plugin'; }
+            }
+        }
+    }
+}
+
+
+
 #   Collect the RPM inventories
 
 #mdevine@W-608863:~/github.com/WMATA-stck/bin> ssh E0207201 "dnf info docker-\* | grep -e ^Name -e '^From repo' ; dnf info containerd.io | grep -e ^Name -e '^From repo'"
@@ -486,6 +543,7 @@ sub MAIN (
     Bool :$unpingable,              #= report unpingable STs
     Bool :$satellite,               #= report pingable STs with satellite connectivity
     Bool :$nosatellite,             #= report pingable STs with NO satellite connectivity
+    Bool :$oneidentity,             #= report pingable STs with down-rev OneIdentity software
     Bool :$sudo,                    #= report pingable STs with centralized SUDO connectivity
     Bool :$ntpstat,                 #= report pingable STs with ntp.wmata.local sync
     Bool :$nosudo,                  #= report pingable STs with NO centralized SUDO connectivity
@@ -596,6 +654,21 @@ sub MAIN (
             printf "%-25s%-18s%s\n", %Station-Terminals{$station-terminal}<canonical-name>,
                                 %Station-Terminals{$station-terminal}<ip-address>,
                                 %Station-Terminals{$station-terminal}<version-id>;
+        }
+    }
+    elsif $oneidentity {
+        collect-dnf-info;
+        for @Station-Terminals-Raw -> $station-terminal {
+            next unless %Station-Terminals{$station-terminal}<pingable>;
+            my $report = False;
+            $report = True  if %Station-Terminals{$station-terminal}<OneIdentity><vasclnt><version>     ne '5.0.7';
+            $report = True  if %Station-Terminals{$station-terminal}<OneIdentity><qpm-plugin><version>  ne '7.2.1.0';
+            next    unless $report;
+            printf "%-25s%12s=%-10s%12s=%-10s\n",   %Station-Terminals{$station-terminal}<canonical-name>,
+                                                    'vasclnt',
+                                                    %Station-Terminals{$station-terminal}<OneIdentity><vasclnt><version>,
+                                                    'qpm-plugin',
+                                                    %Station-Terminals{$station-terminal}<OneIdentity><qpm-plugin><version>;
         }
     }
     elsif $docker-edition {
