@@ -298,7 +298,7 @@ sub local-sudoers {
     for @Station-Terminals-Raw -> $station-terminal {
         if %Station-Terminals{$station-terminal}<pingable> {
             given %result{$station-terminal}.exit-code {
-                when 0  { %Station-Terminals{$station-terminal}<local-sudoers> = %result{$station-terminal}.stdout-results;  }
+                when 0  { %Station-Terminals{$station-terminal}<local-sudoers> = %result{$station-terminal}.stdout-results; }
                 default { %Station-Terminals{$station-terminal}<local-sudoers> = %result{$station-terminal}.stderr-results; }
             }
         }
@@ -569,7 +569,7 @@ sub MAIN (
     Bool :$oneidentity,             #= report pingable STs with down-rev OneIdentity software
     Bool :$sudo,                    #= report pingable STs with centralized SUDO connectivity
     Bool :$nosudo,                  #= report pingable STs with NO centralized SUDO connectivity
-    Bool :$localsudoers,            #= list local sudoers cache file
+    Bool :$local-sudoers,           #= list local sudoers cache file
     Bool :$ntpstat,                 #= report pingable STs with ntp.wmata.local sync
     Bool :$vr,                      #= query pingable STs' operating system V.Rs
 ) {
@@ -653,12 +653,12 @@ sub MAIN (
               unless %Station-Terminals{$station-terminal}<satellite>;
         }
     }
-    elsif $localsudoers {
+    elsif $local-sudoers {
         local-sudoers;
         for @Station-Terminals-Raw -> $station-terminal {
             next unless %Station-Terminals{$station-terminal}<pingable>;
             printf "%-25s%17s%s\n", %Station-Terminals{$station-terminal}<canonical-name>,
-                                    %Station-Terminals{$station-terminal}<ip-address>
+                                    %Station-Terminals{$station-terminal}<ip-address>,
                                     %Station-Terminals{$station-terminal}<local-sudoers>;
         }
     }
