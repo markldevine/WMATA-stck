@@ -289,6 +289,7 @@ sub local-sudoers {
             %command{$station-terminal} =
             'ssh',
             %Station-Terminals{$station-terminal}<canonical-name>,
+            '/usr/bin/sudo',
             '/usr/bin/ls',
             '-l',
             '/etc/opt/quest/qpm4u/policy/sudoers';
@@ -298,8 +299,8 @@ sub local-sudoers {
     for @Station-Terminals-Raw -> $station-terminal {
         if %Station-Terminals{$station-terminal}<pingable> {
             given %result{$station-terminal}.exit-code {
-                when 0  { %Station-Terminals{$station-terminal}<local-sudoers> = %result{$station-terminal}.stdout-results; }
-                default { %Station-Terminals{$station-terminal}<local-sudoers> = %result{$station-terminal}.stderr-results; }
+                when 0  { %Station-Terminals{$station-terminal}<local-sudoers> = %result{$station-terminal}.stdout-results.chomp; }
+                default { %Station-Terminals{$station-terminal}<local-sudoers> = %result{$station-terminal}.stderr-results.chomp; }
             }
         }
     }
@@ -657,7 +658,7 @@ sub MAIN (
         local-sudoers;
         for @Station-Terminals-Raw -> $station-terminal {
             next unless %Station-Terminals{$station-terminal}<pingable>;
-            printf "%-25s%17s%s\n", %Station-Terminals{$station-terminal}<canonical-name>,
+            printf "%-25s%-17s%s\n", %Station-Terminals{$station-terminal}<canonical-name>,
                                     %Station-Terminals{$station-terminal}<ip-address>,
                                     %Station-Terminals{$station-terminal}<local-sudoers>;
         }
