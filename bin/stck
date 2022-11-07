@@ -282,6 +282,29 @@ sub satellite-connectivity {
     }
 }
 
+sub local-sudoers {
+    my %command;
+    for @Station-Terminals-Raw -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            %command{$station-terminal} =
+            'ssh',
+            %Station-Terminals{$station-terminal}<canonical-name>,
+            '/usr/bin/ls',
+            '-l',
+            '/etc/opt/quest/qpm4u/policy/sudoers';
+        }
+    }
+    my %result = Async::Command::Multi.new(:%command, :20time-out, :10batch, :2attempts, :delay(.5)).sow.reap;
+    for @Station-Terminals-Raw -> $station-terminal {
+        if %Station-Terminals{$station-terminal}<pingable> {
+            given %result{$station-terminal}.exit-code {
+                when 0  { %Station-Terminals{$station-terminal}<local-sudoers> = %result{$station-terminal}.stdout-results;  }
+                default { %Station-Terminals{$station-terminal}<local-sudoers> = %result{$station-terminal}.stderr-results; }
+            }
+        }
+    }
+}
+
 sub centralized-sudo {
     my %command;
     for @Station-Terminals-Raw -> $station-terminal {
@@ -295,8 +318,8 @@ sub centralized-sudo {
 #           '-z',
 #           '10.10.132.63',
 #           '12345';
-           '/usr/bin/sudo',
-           '-nl';
+            '/usr/bin/sudo',
+            '-nl';
         }
     }
     my %result = Async::Command::Multi.new(:%command, :20time-out, :10batch, :2attempts, :delay(.5)).sow.reap;
@@ -545,8 +568,9 @@ sub MAIN (
     Bool :$nosatellite,             #= report pingable STs with NO satellite connectivity
     Bool :$oneidentity,             #= report pingable STs with down-rev OneIdentity software
     Bool :$sudo,                    #= report pingable STs with centralized SUDO connectivity
-    Bool :$ntpstat,                 #= report pingable STs with ntp.wmata.local sync
     Bool :$nosudo,                  #= report pingable STs with NO centralized SUDO connectivity
+    Bool :$localsudoers,            #= list local sudoers cache file
+    Bool :$ntpstat,                 #= report pingable STs with ntp.wmata.local sync
     Bool :$vr,                      #= query pingable STs' operating system V.Rs
 ) {
     @Station-Terminals-Raw = $redis.smembers('fg:st:lc:all').list.sort({ $^a.fc cmp $^b.fc });
@@ -627,6 +651,15 @@ sub MAIN (
             printf "%-25s%s\n", %Station-Terminals{$station-terminal}<canonical-name>,
                                 %Station-Terminals{$station-terminal}<ip-address>
               unless %Station-Terminals{$station-terminal}<satellite>;
+        }
+    }
+    elsif $localsudoers {
+        local-sudoers;
+        for @Station-Terminals-Raw -> $station-terminal {
+            next unless %Station-Terminals{$station-terminal}<pingable>;
+            printf "%-25s%17s%s\n", %Station-Terminals{$station-terminal}<canonical-name>,
+                                    %Station-Terminals{$station-terminal}<ip-address>
+                                    %Station-Terminals{$station-terminal}<local-sudoers>;
         }
     }
     elsif $sudo {
